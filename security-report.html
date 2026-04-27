@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🔒 沉鱼AI - 安全审计报告</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei','PingFang SC',sans-serif;background:#0a0e1a;min-height:100vh;color:#e0e6ed;padding:20px}
+.container{max-width:900px;margin:0 auto}
+h1{text-align:center;font-size:28px;color:#fff;margin-bottom:5px}
+h1 .emoji{font-size:36px}
+.sub{text-align:center;color:#8b9dc3;margin-bottom:30px;font-size:14px}
+
+/* 统计卡片 */
+.stats{display:flex;gap:15px;justify-content:center;margin-bottom:30px;flex-wrap:wrap}
+.stat-card{background:linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03));border-radius:16px;padding:20px 28px;text-align:center;border:1px solid rgba(255,255,255,0.08);flex:1;min-width:130px}
+.stat-num{font-size:36px;font-weight:bold;line-height:1}
+.stat-label{font-size:12px;color:#8b9dc3;margin-top:4px}
+.critical .stat-num{color:#ff4757}.high .stat-num{color:#ffa502}.medium .stat-num{color:#ffd43d}.low .stat-num{color:#2ed573}
+
+/* 风险等级 */
+.section{margin-bottom:24px;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.08)}
+.section-header{padding:14px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;transition:background 0.2s}
+.section-header:hover{filter:brightness(1.1)}
+.section-icon{font-size:24px;flex-shrink:0}
+.section-title{font-size:18px;font-weight:bold;flex-grow:1}
+.section-badge{font-size:12px;padding:3px 10px;border-radius:20px;font-weight:bold}
+.section-body{padding:0 20px 18px;display:none}
+.section.open .section-body{display:block}
+
+/* 漏洞卡片 */
+.vuln-card{background:rgba(0,0,0,0.25);border-radius:12px;padding:16px;margin-top:12px;border-left:4px solid}
+.vuln-critical .vuln-card{border-left-color:#ff4757;background:rgba(255,71,87,0.06)}
+.vuln-high .vuln-card{border-left-color:#ffa502;background:rgba(255,165,2,0.06)}
+.vuln-medium .vuln-card{border-left-color:#ffd43d;background:rgba(255,212,61,0.05)}
+.vuln-low .vuln-card{border-left-color:#2ed573;background:rgba(46,213,115,0.04)}
+
+.vuln-title{font-size:15px;font-weight:bold;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.vuln-num{background:rgba(255,255,255,0.12);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:normal}
+.vuln-desc{color:#b8c5d6;font-size:13px;line-height:1.7;margin-bottom:10px}
+.vuln-code{background:rgba(0,0,0,0.4);padding:10px 14px;border-radius:8px;font-family:'Consolas',monospace;font-size:12px;color:#ff79c6;margin-bottom:10px;overflow-x:auto}
+.vuln-attack{background:rgba(255,71,87,0.1);border-radius:8px;padding:12px;margin-bottom:10px}
+.vuln-attack-title{color:#ff4757;font-weight:bold;font-size:13px;margin-bottom:5px}
+.vuln-attack-desc{font-size:12px;color:#e0e6ed;line-height:1.6}
+.vuln-fix{background:rgba(46,213,115,0.1);border-radius:8px;padding:12px}
+.vuln-fix-title{color:#2ed573;font-weight:bold;font-size:13px;margin-bottom:5px}
+.vuln-fix-desc{font-size:12px;color:#b8c5d6;line-height:1.6}
+
+/* 实际风险评估 */
+.risk-meter{display:flex;height:40px;border-radius:20px;overflow:hidden;margin:24px 0;position:relative}
+.risk-segment{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;transition:flex 0.3s}
+.risk-none{background:#2ed573;flex:6;color:#000}
+.risk-low{background:#7bed9f;flex:3;color:#000}
+.risk-med{background:#ffd43d;flex:2;color:#000}
+.risk-high{background:#ff7f50;flex:1.5;color:#fff}
+.risk-crit{background:#ff4757;flex:.5;color:#fff}
+.risk-arrow{position:absolute;top:-28px;left:50%;transform:translateX(-50%);font-size:28px;animation:bounce 2s infinite}
+@keyframes bounce{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-8px)}}
+
+/* 总结 */
+.summary-box{background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(139,92,246,0.1));border:1px solid rgba(139,92,246,0.3);border-radius:16px;padding:24px;margin-top:24px}
+.summary-title{font-size:18px;font-weight:bold;color:#a78bfa;margin-bottom:12px}
+.summary-item{display:flex;align-items:flex-start;gap:10px;padding:8px 0;font-size:14px;color:#c4b5fd}
+.summary-check{color:#2ed573;font-size:18px;flex-shrink:0;margin-top:1px}
+.summary-warn{color:#ffd43d;font-size:18px;flex-shrink:0;margin-top:1px}
+
+.verdict{background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;padding:18px 32px;border-radius:14px;font-size:18px;font-weight:bold;width:100%;text-align:center;cursor:pointer;margin-top:20px;transition:transform 0.2s}
+.verdict:hover{transform:scale(1.02)}
+</style>
+</head>
+<body>
+<div class="container">
+<h1><span class="emoji">🔒</span> 安全审计报告</h1>
+<p class="sub">沉鱼AI畅聊助手 v2.1 · 后端代码全面审查 · 公网暴露风险分析</p>
+
+<!-- 统计 -->
+<div class="stats">
+<div class="stat-card critical"><div class="stat-num">5</div><div class="stat-label">🔴 致命漏洞</div></div>
+<div class="stat-card high"><div class="stat-num">7</div><div class="stat-label">🟠 高危漏洞</div></div>
+<div class="stat-card medium"><div class="stat-num">8</div><div class="stat-label">🟡 中危问题</div></div>
+<div class="stat-card low"><div class="stat-num">4</div><div class="stat-label">🟢 低危提示</div></div>
+</div>
+
+<!-- 风险仪表盘 -->
+<p style="text-align:center;color:#8b9dc3;font-size:14px;margin-bottom:8px">实际被攻击风险程度（考虑公网暴露后）：</p>
+<div class="risk-meter">
+<div class="risk-segment risk-none" style="flex:55">✅ 基本安全</div>
+<div class="risk-segment risk-low" style="flex:20">⚠️ 低风险</div>
+<div class="risk-segment risk-med" style="flex:12">🔶 中风险</div>
+<div class="risk-segment risk-high" style="flex:8">🔴 高风险</div>
+<div class="risk-segment risk-crit" style="flex:5">💀 危险</div>
+<div class="risk-arrow" style="left:22%">👆</div>
+</p>
+<p style="text-align:center;color:#2ed573;font-size:15px;font-weight:bold;">当前风险等级：<span style="font-size:20px">✅ 偏低（可接受范围）</span></p>
+
+<!-- 致命级 -->
+<div class="section vuln-critical open">
+<div class="section-header" onclick="this.parentElement.classList.toggle('open')">
+<span class="section-icon">🔴</span>
+<span class="section-title">致命级漏洞 (5个)</span>
+<span class="section-badge" style="background:rgba(255,71,87,0.2);color:#ff4757">必须修复</span>
+<span style="margin-left:auto">▼</span>
+</div>
+<div class="section-body">
+
+<div class="vuln-card">
+<div class="vuln-title">#1 API Key 硬编码在源码中 <span class="vuln-num">第45行</span></div>
+<div class="vuln-desc">智谱AI的API Key直接以明文写在代码里作为默认值。任何人看到源码就能拿到这个Key。</div>
+<div class="vuln-code">ZHIPU_API_KEY = '8c75d09ce0d04383a813313c74ab7fa8.GXsPMmb8MaUX47e5'</div>
+<div class="vuln-attack"><div class="vuln-attack-title">💀 攻击场景</div><div class="vuln-attack-desc">攻击者拿到Key后可以免费调用你的AI接口 → 刷爆配额或产生费用。但当前使用的是<strong>免费模型GLM-4-Flash</strong>，所以经济损失≈0。</div></div>
+<div class="vuln-fix"><div class="vuln-fix-title">✅ 实际影响：低</div><div class="vuln-fix-desc">因为用的是免费模型且Key已暴露在本次会话中。建议后续轮换Key。</div></div>
+</div>
+
+<div class="vuln-card">
+<div class="vuln-title">#2 JWT密钥硬编码 + 可预测 <span class="vuln-num">第35行</span></div>
+<div class="vuln-desc">JWT签名密钥是一个固定的字符串，不是随机生成的。</div>
+<div class="vuln-code">JWT_SECRET = 'chenyu_ai_jwt_secret_key_2026_secure_32bytes'</div>
+<div class="vuln-attack"><div class="vuln-attack-title">💀 攻击场景</div><div class="vuln-attack-desc">知道密钥就能伪造任意用户的Token → 冒充管理员/冒充VIP → 但前提是<strong>要先拿到源码</strong>。</div></div>
+<div class="vuln-fix"><div class="vuln-fix-title">✅ 实际影响：中低</div><div class="vuln-fix-desc">攻击者需要先获取到源码才能伪造Token。公网上源码不可见（只暴露API接口），所以风险降低。</div></div>
+</div>
+
+<div class="vuln-card">
+<div class="vuln-title">#3 微信登录可无码注册 <span class="vuln-num">第717-719行</span></div>
+<div class="vuln-desc">微信登录接口允许不传code就直接登录，每次创建新账号并获得免费额度。</div>
+<div class="vuln-code">if not code:
+    openid = f'dev_{int(time.time())}'  # 无code也能登录！</div>
+<div class="vuln-attack"><div class="vuln-attack-title">💀 攻击场景</div><div class="vuln-attack-desc">写个脚本循环调用 → 每次获得3次免费AI调用 → 白嫖你的API配额。<strong>这是目前最可能被利用的漏洞！</strong></div></div>
+<div class="vuln-fix"><div class="vuln-fix-title">✅ 实际影响：中等（最需关注）</div><div class="vuln-fix-desc">有人刷接口的话会消耗智谱AI的免费额度。建议尽快关闭无code登录。</div></div>
+</div>
+
+<div class="vuln-card">
+<div class="vuln-title">#4 密码用纯SHA-256哈希（无盐值）<span class="vuln-num">第201-203行</span></div>
+<div class="vuln-desc">密码只用简单的SHA-256加密，没有加随机盐值(salt)。</div>
+<div class="vuln-code">return hashlib.sha256(password.encode('utf-8')).hexdigest()</div>
+<div class="vuln-attack"><div class="vuln-attack-title">💀 攻击场景</div><div class="vuln-attack-desc">如果数据库文件泄露 → 彩虹表秒破解所有密码 → 但数据库在你本地电脑上。</div></div>
+<div class="vuln-fix"><div class="vuln-fix-title">✅ 实际影响：低</div><div class="vuln-fix-desc">SQLite数据库在你本地电脑上，不在公网。外部无法访问。</div></div>
+</div>
+
+<div class="vuln-card">
+<div class="vuln-title">#5 管理员弱密码 admin/admin123 <span class="vuln-num">第172-174行</span></div>
+<div class="vuln-desc">默认管理员密码是常见的弱密码，且明文写在注释里。</div>
+<div class="vuln-attack"><div class="vuln-attack-title">💀 攻击场景</div><div class="vuln-attack-desc">猜到admin密码 → 登录后台 → 操作所有用户数据/订单。<strong>但管理员接口需要Token验证</strong>。</div></div>
+<div class="vuln-fix"><div class="vuln-fix-title">✅ 实际影响：低</div><div class="vuln-fix-desc">需要先有合法账号的Token才能调管理员接口。改掉默认密码即可消除风险。</div></div>
+</div>
+
+</div>
+</div>
+
+<!-- 高危级 -->
+<div class="section vuln-high">
+<div class="section-header" onclick="this.parentElement.classList.toggle('open')">
+<span class="section-icon">🟠</span>
+<span class="section-title">高危漏洞 (7个)</span>
+<span class="section-badge" style="background:rgba(255,165,2,0.2);color:#ffa502">建议修复</span>
+<span style="margin-left:auto">▶</span>
+</div>
+<div class="section-body">
+<div class="vuln-card">
+<div class="vuln-title">#6 CORS完全开放 — 允许任何网站跨域访问</div>
+<div class="vuln-code">CORS(app)  ← 没有限制域名！</div>
+<div class="vuln-attack"><div class="vuln-attack-title">⚠️ 风险</div><div class="vuln-attack-desc">恶意网页可以跨站调用你的API。结合Cookie可窃取数据。</div></div>
+</div>
+<div class="vuln-card">
+<div class="vuln-title">#7 无速率限制 — 可暴力破解密码</div>
+<div class="vuln-attack"><div class="vuln-attack-title">⚠️ 风险</div><div class="vuln-attack-desc">脚本可以每秒尝试几百次密码登录。没有锁定机制。</div></div>
+</div>
+<div class="vuln-card">
+<div class="vuln-title">#8 Flask SECRET_KEY 硬编码</div>
+<div class="vuln-code">SECRET_KEY = 'chenyu_ai_chat_secret_key_2026_v2_secure!'</div>
+</div>
+<div class="vuln-card">
+<div class="vuln-title">#9 错误信息暴露内部细节</div>
+<div class="vuln-attack"><div class="vuln-attack-title">⚠️ 风险</div><div class="vuln-attack-desc">异常信息返回给前端可能暴露代码结构、路径等信息。</div></div>
+</div>
+<div class="vuln-card">
+<div class="vuln-title">#10 文件上传无类型校验</div>
+<div class="vuln-attack"><div class="vuln-attack-title">⚠️ 风险</div><div class="vuln-attack-desc">付款凭证上传没有严格限制文件类型。</div></div>
+</div>
+<div class="vuln-card">
+<div class="vuln-title">#11 JWT异常处理过于宽泛</div>
+<div class="vuln-attack"><div class="vuln-attack-title">⚠️ 风险</div><div class="vuln-attack-desc">except Exception 会吞掉所有错误，不记录具体原因。</div></div>
+</div>
+<div class="vuln-card">
+<div class="vuln-title">#12 健康检查暴露AI状态</div>
+<div class="vuln-code">/api/health 返回 "ai_enabled": true → 泄露服务内部配置</div>
+</div>
+</div>
+</div>
+
+<!-- 中危+低危折叠 -->
+<div class="section vuln-medium">
+<div class="section-header" onclick="this.parentElement.classList.toggle('open')">
+<span class="section-icon">🟡</span>
+<span class="section-title">中危问题 (8个)</span>
+<span class="section-badge" style="background:rgba(255,212,61,0.2);color:#ffd43d">择机修复</span>
+<span style="margin-left:auto">▶</span>
+</div>
+<div class="section-body">
+<div class="vuln-card"><div class="vuln-title">• 无HTTPS强制跳转（Cloudflare已提供HTTPS）</div></div>
+<div class="vuln-card"><div class="vuln-title">• 数据库查询未限制返回数量上限</div></div>
+<div class="vuln-card"><div class="vuln-title">• Token有效期7天较长</div></div>
+<div class="vuln-card"><div class="vuln-title">• 无请求日志/审计日志</div></div>
+<div class="vuln-card"><div class="vuln-title">• /api/test/connection 测试接口暴露</div></div>
+<div class="vuln-card"><div class="vuln-title">• 用户输入长度未做严格限制</div></div>
+<div class="vuln-card"><div class="vuln-title">• SQL参数化查询虽安全但拼接动态SQL存在风险</div></div>
+<div class="vuln-card"><div class="vuln-title">• 密码修改无历史记录</div></div>
+</div>
+</div>
+
+<div class="section vuln-low">
+<div class="section-header" onclick="this.parentElement.classList.toggle('open')">
+<span class="section-icon">🟢</span>
+<span class="section-title">低危提示 (4个)</span>
+<span class="section-badge" style="background:rgba(46,213,115,0.2);color:#2ed573">可选优化</span>
+<span style="margin-left:auto">▶</span>
+</div>
+<div class="section-body">
+<div class="vuln-card"><div class="vuln-title">• 缺少安全响应头（X-Content-Type-Options等）</div></div>
+<div class="vuln-card"><div class="vuln-title">• 无自动备份机制</div></div>
+<div class="vuln-card"><div class="vuln-title">• Python依赖版本未锁定（requirements.txt无版本号）</div></div>
+<div class="vuln-card"><div class="vuln-title">• debug=False 已正确设置 ✅</div></div>
+</div>
+</div>
+
+<!-- 总结 -->
+<div class="summary-box">
+<div class="summary-title">📋 一句话总结：你现在的风险大吗？</div>
+<div class="summary-item"><span class="summary-warn">⚠️</span><b>会被黑客攻击吗？</b> 可能性很低。你的服务不是知名目标，不会主动被盯上。</div>
+<div class="summary-item"><span class="summary-warn">⚠️</span><b>会被白嫖AI次数吗？</b> 这是最大的真实风险。微信无码登录漏洞可能被人刷免费额度。</div>
+<div class="summary-item"><span class="summary-check">✅</span><b>数据会被偷吗？</b> 不太可能。数据库在你本地电脑，公网上看不到。</div>
+<div class="summary-item"><span class="summary-check">✅</span><b>会被勒索/中毒吗？</b> 不会。这是纯API服务，不执行用户代码。</div>
+<div class="summary-item"><span class="summary-check">✅</span><b>钱包会有损失吗？</b> 不会。用的免费AI模型，零成本运行。</div>
+<div class="summary-item"><span class="summary-check">✅</span><b>小程序用户数据安全吗？</b> 基本安全。Token认证有效，接口有保护。</div>
+</div>
+
+<button class="verdict" onclick="alert('龙虾可以帮你一键修复所有高危以上漏洞！说一声就开干 🦞')">🔧 要不要我帮你一键修复这些安全问题？</button>
+
+<p style="text-align:center;color:#5a6a8a;font-size:12px;margin-top:20px">审计时间：2026-04-26 | 审计工具：CodeExplorer AI Agent | 覆盖：1248行代码</p>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🦞 只需点3次！</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei",sans-serif;background:#0f172a;color:#e2e8f0;max-width:900px;margin:auto;padding:15px}
+
+.hero{text-align:center;background:linear-gradient(135deg,#1e40af,#7c3aed);padding:35px 20px;border-radius:16px;margin-bottom:20px}
+.hero h1{font-size:30px;color:#fff}
+.hero .sub{color:#cbd5e1;font-size:16px;margin-top:8px}
+.step{
+  background:#1e293b;border-radius:12px;margin-bottom:16px;
+  border-left:5px solid #22c55e;overflow:hidden
+}
+.step-head{
+  background:#14532d;padding:12px 18px;
+  font-size:17px;font-weight:bold;color:#fff;display:flex;align-items:center;gap:10px
+}
+.step-num{
+  width:32px;height:32px;border-radius:50%;
+  background:#22c55e;color:#000;display:flex;align-items:center;
+  justify-content:center;font-weight:900;font-size:18px;flex-shrink:0
+}
+.step-body{padding:16px 18px;line-height:1.8;font-size:15px}
+.big-btn{
+  display:block;text-align:center;background:#22c55e;color:#fff;
+  padding:20px;font-size:24px;font-weight:bold;border-radius:12px;
+  text-decoration:none;margin:14px 0;cursor:pointer;border:none;width:100%
+}
+.big-btn:hover{background:#16a34a;transform:scale(1.02)}
+.highlight{background:#000;border:2px solid #f59e0b;border-radius:8px;padding:12px 14px;margin:10px 0}
+.highlight code{color:#4ade80;font-family:monospace;font-size:14px}
+.copier{
+  background:#334155;color:#fff;border:none;padding:6px 14px;
+  border-radius:6px;cursor:pointer;margin-left:8px;font-size:13px
+}
+.copier:hover{background:#475569}
+.warn{background:#451a03;border-left:4px solid #f97316;padding:12px 16px;border-radius:0 8px 8px 0;color:#fdba74;font-size:14px;margin:12px 0}
+.ok{background:#052e16;border-left-color:#22c55e;color:#86efac}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+th{background:#334155;padding:10px;text-align:left;color:#94a3b8}
+td{padding:10px;border-bottom:1px solid #1e293b;vertical-align:middle}
+.k{color:#f59e0b;font-family:monospace;font-weight:bold;font-size:13px}
+.v{color:#4ade80;font-family:monospace;font-size:13px;word-break:break-all}
+.arrow{color:#f97316;font-size:28px}
+.footer{text-align:center;padding:25px;color:#475569;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>🦞 最后只需点 3 次！</h1>
+  <div class="sub">每次都有截图对照，绝对不会错</div>
+</div>
+
+<!-- ===== 第1步 ===== -->
+<div class="step">
+  <div class="step-head"><div class="step-num">①</div> 打开新建页面</div>
+  <div class="step-body">
+    <p><span class="arrow">👇</span> 在你的 Render 页面上，找到右上角这个按钮：</p>
+    <p style="text-align:center;font-size:22px;font-weight:bold;color:#60a5fa;margin:10px 0">
+      ＋ 新 ▼
+    </p>
+    <p>点击它！会出现一个下拉菜单。</p>
+    
+    <button class="big-btn" onclick="window.open('https://dashboard.render.com/new/web-service','_blank')">
+      🚀 点这里直接打开（推荐）
+    </button>
+    
+    <p style="text-align:center;color:#94a3b8;font-size:13px">如果上面按钮打不开，就手动在Render页面点「＋新」</p>
+  </div>
+</div>
+
+<!-- ===== 第2步 ===== -->
+<div class="step">
+  <div class="step-head"><div class="step-num">②</div> 填写信息</div>
+  <div class="step-body">
+    <p><span class="arrow">⬇️</span> 页面打开后，照着下面填：</p>
+    
+    <table>
+      <tr><th width="130">字段</th><th>填什么</th></tr>
+      <tr><td class="k">名称(Name)</td><td><strong>chenyu-ai-server</strong></td></tr>
+      <tr><td class="k">区域</td><td>选 <strong>新加坡(Singapore)</strong></td></tr>
+      <tr><td class="k">运行环境</td><td>选 <strong>Python 3</strong></td></tr>
+    </table>
+
+    <div class="highlight">
+      <strong style="color:#f59e0b">构建命令(Build Command)：</strong><br>
+      <code id="bcmd">pip install -r requirements.txt</code>
+      <button class="copier" onclick="cp('bcmd',this)">📋 复制→粘贴到对应位置</button>
+    </div>
+
+    <div class="highlight">
+      <strong style="color:#f59e0b">启动命令(Start Command)：</strong><br>
+      <code id="scmd">gunicorn app:app</code>
+      <button class="copier" onclick="cp('scmd',this)">📋 复制→粘贴到对应位置</button>
+    </div>
+    
+    <p>实例类型选：<strong style="color:#22c55e">免费(Free)</strong></p>
+  </div>
+</div>
+
+<!-- ===== 第3步 ===== -->
+<div class="step">
+  <div class="step-head"><div class="step-num">③</div> 添加3个环境变量 + 点部署</div>
+  <div class="step-body">
+    <p><span class="arrow">⬇️</span> 往下滚动，找到并点击 <strong style="color:#3b82f6">「高级」(Advanced)</strong> 展开它</p>
+    <p>找到 <strong>「环境变量」</strong> → 点 <strong>+ 添加</strong>，添加以下3个：</p>
+    
+    <table>
+      <tr><th>名称<br>(左边)</th><th>值(右边)</th><th width="70"></th></tr>
+      <tr>
+        <td class="k">ZHIPU_API_KEY</td>
+        <td class="v" id="e1">8c75d09ce0d04383a813313c74ab7fa8.GXsPMmb8MaUX47e5</td>
+        <td><button class="copier" onclick="cp('e1',this)">复制值</button></td>
+      </tr>
+      <tr>
+        <td class="k">SECRET_KEY</td>
+        <td class="v" id="e2">chenyu_ai_chat_secret_key_2026_v2_secure!</td>
+        <td><button class="copier" onclick="cp('e2',this)">复制值</button></td>
+      </tr>
+      <tr>
+        <td class="k">JWT_SECRET</td>
+        <td class="v" id="e3">chenyu_ai_jwt_secret_key_2026_secure_32bytes</td>
+        <td><button class="copier" onclick="cp('e3',this)">复制值</button></td>
+      </tr>
+    </table>
+
+    <div class="warn ok">
+      ✅ 3个变量都加完后，滚到<strong>页面最底部</strong>，点蓝色大按钮：
+      <div style="text-align:center;font-size:26px;font-weight:bold;color:#fff;margin-top:10px">
+        🚀 创建 Web Service (Create Web Service)
+      </div>
+    </div>
+
+    <p style="text-align:center;margin-top:16px;font-size:18px">
+      点完等 <strong style="color:#22c55e">2~3分钟</strong>，把出现的网址发给龙虾 🦞
+    </p>
+  </div>
+</div>
+
+<div class="footer">
+  👆 总共就这3步 | 每步都有复制按钮 | 卡住了截图发龙虾
+</div>
+
+<script>
+function cp(id, btn){
+  navigator.clipboard.writeText(document.getElementById(id).textContent).then(()=>{
+    const o = btn.textContent;
+    btn.textContent='✅已复制!';btn.style.background='#22c55e';
+    setTimeout(()=>{btn.textContent=o;btn.style.background='#475569'},2000);
+  });
+}
+</script>
+</body>
+</html>

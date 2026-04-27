@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 数据库（云端会自动创建）
+*.db
+*.sqlite3
+data/
+
+# 密钥文件（绝对不能上传！）
+.jwt_secret
+.secret_key
+.env
+
+# 上传的凭证图片
+uploads/
+
+# 可执行文件
+cloudflared.exe
+*.exe
+
+# 测试脚本
+test_*.py
+reset_*.py
+diag_*.py
+set_*.py
+verify_*.py
+fix_*.py
+check_*.py
+
+# 日志
+*.log
+deploy-wizard.html
+deploy-simple.html

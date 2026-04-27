@@ -1,0 +1,13 @@
+# 沉鱼AI畅聊助手 - 后端依赖
+# 部署平台: Render.com (免费tier)
+
+# Web框架
+Flask==3.0.3
+gunicorn==22.0.0
+
+# HTTP请求
+requests==2.32.3
+openai==1.51.2  # 智谱AI兼容OpenAI SDK
+
+# 数据处理
+numpy==1.26.4
