@@ -1,65 +1,23 @@
-# Render.com 免费部署配置
-# 沉鱼AI畅聊助手 - 云端托管
-#
-# 部署步骤：
-# 1. 把 server/ 目录上传到 GitHub
-# 2. 在 Render.com 创建 Web Service，连接 GitHub 仓库
-# 3. 设置环境变量（重要！）
-# 4. 部署完成！
-
-service:
-  type: web
-  name: chenyu-ai-chat
-  runtime: python
-  
-  # 构建
-  buildCommand: pip install -r requirements.txt
-  startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
-  
-  # 免费计划限制
-  plan: free
-  
-  # 自动部署
-  autoDeploy: true
-  
-  # 环境变量（必须设置！）
-  envVars:
-    # 端口（Render自动设置）
-    - key: PORT
-      value: 10000
-    
-    # Python版本
-    - key: PYTHON_VERSION
-      value: "3.12"
-    
-    # ========== 重要！必须设置 ==========
-    # 智谱AI API密钥（从 https://open.bigmodel.cn/ 获取）
-    - key: ZHIPU_API_KEY
-      sync: false  # 不同步到GitHub，请在Render Dashboard设置！
-    
-    # AI模型配置
-    - key: AI_PRIMARY_MODEL
-      value: glm-4-plus  # 主模型：更准确遵循指令
-    - key: AI_FALLBACK_MODEL
-      value: glm-4-flash  # 备用模型：免费快速
-    
-    # Flask密钥（随机生成）
-    - key: SECRET_KEY
-      generateValue: true
-    
-    # 数据库路径
-    - key: DATABASE_PATH
-      value: /data/app.db
-    # ==================================
-
-# 健康检查
-healthCheckPath: /api/health
-
-# 区域
-region: singapore  # 新加坡，离中国大陆近
-
-# 磁盘（持久化存储，$5/月，免费版不支持）
-# disk:
-#   name: data-disk
-#   mountPath: /data
-#   sizeGB: 1
+services:
+  - type: web
+    name: cyaihub-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    plan: free
+    autoDeploy: true
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: ZHIPU_API_KEY
+        sync: false
+      - key: AI_PRIMARY_MODEL
+        value: glm-4-plus
+      - key: AI_FALLBACK_MODEL
+        value: glm-4-flash
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /app/data/app.db

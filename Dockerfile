@@ -1,4 +1,4 @@
-# 沉鱼AI畅聊助手 - Dockerfile (Zeabur/通用部署)
+# 沉鱼AI畅聊助手 - Dockerfile (Render/通用部署)
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -20,16 +20,12 @@ COPY . .
 # 创建数据目录（用于SQLite持久化）
 RUN mkdir -p /app/data
 
-# 环境变量（可在Zeabur Dashboard中覆盖）
-ENV PORT=5678
+# 环境变量（可在Render Dashboard中覆盖）
+ENV PORT=10000
 ENV DB_PATH=/app/data/app.db
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/api/health')" || exit 1
 
 # 暴露端口
 EXPOSE ${PORT}
 
-# 启动命令（Zeabur会自动用Gunicorn包装）
-CMD ["python", "app.py"]
+# 使用Gunicorn启动（生产环境标准）
+CMD gunicorn app:app --bind 0.0.0.0:${PORT} --workers 1 --timeout 120
