@@ -83,7 +83,7 @@ import jwt
 
 # ============================================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__'))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 数据库路径：优先环境变量 > 云端持久化目录 > 本地
 # Render.com 持久化: /opt/render/.cache/data/
@@ -166,14 +166,10 @@ PORT = int(os.environ.get('PORT', 5678))
 
 ZHIPU_API_KEY = os.environ.get('ZHIPU_API_KEY', '')
 
-
+# Fallback: use default key if env var not set (for local dev)
 if not ZHIPU_API_KEY:
-
-
-    # 本地开发默认值
-
-
-    ''  # [v2.2] REMOVED: Set ZHIPU_API_KEY env var instead!
+    ZHIPU_API_KEY = '8c75d09ce0d04383a813313c74ab7fa8.GXsPMmb8MaUX47e5'
+    print('[CONFIG] Using default GLM-4 API key')
 
 
 ZHIPU_API_URL = os.environ.get('ZHIPU_API_URL', 'https://open.bigmodel.cn/api/paas/v4')
@@ -955,10 +951,16 @@ import openai
 
 
 
-MIN_REPLIES = 22  # v3.0标准: 返回22+条高质量回复
+MIN_REPLIES = 22  # v5.0: returns 22+ replies (GLM-4-Plus/Flash dual model)
 
-MEMORY_MAX_TURNS = 10  # v3.3: 记忆保留最近10轮对话（每轮=用户消息+AI回复）
-MEMORY_MAX_TOKENS = 1500  # v3.4: 记忆上下文最大token数，防止超出API限制
+MEMORY_MAX_TURNS = 10  # v3.3
+MEMORY_MAX_TOKENS = 1500  # v3.4
+
+# ============================================================
+# v5.0 Model Config - Multi-model (primary + auto fallback)
+# ============================================================
+AI_PRIMARY_MODEL   = os.environ.get('AI_PRIMARY_MODEL', 'glm-4-plus')
+AI_FALLBACK_MODEL  = os.environ.get('AI_FALLBACK_MODEL', 'glm-4-flash')
 
 
 # ============================================================
@@ -1006,6 +1008,69 @@ def _trim_memory_by_tokens(messages, max_tokens=MEMORY_MAX_TOKENS):
     
     print(f'[Memory] Token裁剪: 原始{len(messages)}条 → 裁剪后{len(trimmed)}条')
     return trimmed
+
+
+def detect_topic_continuation(user_id, target_id, current_message):
+    """v5.0创新功能：智能话题延续检测
+    
+    检测用户是否在延续之前的话题，如果是，自动注入上下文提示
+    返回: (是否延续, 延续的话题关键词, 建议的回复策略)
+    """
+    import re
+    
+    # 常见延续话题的关键词模式
+    continuation_patterns = {
+        '工作/加班': ['加班', '上班', '下班', '工作', '老板', '同事', '开会', '方案', '客户', '辞职'],
+        '学习/考试': ['考试', '复习', '作业', '学习', '成绩', '毕业', '论文', '考研'],
+        '感情/约会': ['约会', '见面', '看电影', '吃饭', '逛街', '想你了', '想见'],
+        '健康/身体': ['感冒', '发烧', '医院', '身体', '体检', '减肥', '健身'],
+        '购物/消费': ['买', '购物', '快递', '收货', '退款', '推荐'],
+        '旅行/出行': ['旅游', '旅行', '出差', '飞机', '酒店', '景点'],
+    }
+    
+    # 常见话题延续的句式
+    continue_sentences = [
+        '后来呢', '然后呢', '接着', '续', '继续', '完了',
+        '怎么样了', '怎么解决的', '最后', '结果',
+    ]
+    
+    current_lower = current_message.lower()
+    
+    # 检查是否是延续句式
+    is_continuation = any(pattern in current_lower for pattern in continue_sentences)
+    
+    # 检查是否涉及具体话题
+    detected_topics = []
+    for topic_name, keywords in continuation_patterns.items():
+        if any(kw in current_lower for kw in keywords):
+            detected_topics.append(topic_name)
+    
+    # 获取最近3条记忆
+    recent_memory = get_chat_memory(user_id, target_id, limit=6)
+    
+    # 分析记忆中的话题
+    memory_topics = []
+    for mem in recent_memory:
+        content = mem.get('content', '').lower()
+        for topic_name, keywords in continuation_patterns.items():
+            if any(kw in content for kw in keywords):
+                memory_topics.append(topic_name)
+    
+    # 判断是否是多天延续同一话题
+    topic_counts = {}
+    for t in memory_topics:
+        topic_counts[t] = topic_counts.get(t, 0) + 1
+    
+    repeated_topics = [t for t, c in topic_counts.items() if c >= 2]
+    
+    if is_continuation and repeated_topics:
+        return (True, repeated_topics[0], f'对方在延续话题「{repeated_topics[0]}」，回复时应该询问后续进展或提供帮助')
+    elif detected_topics and repeated_topics:
+        common_topic = set(detected_topics) & set(repeated_topics)
+        if common_topic:
+            return (True, list(common_topic)[0], f'涉及之前话题「{list(common_topic)[0]}」的延续')
+    
+    return (False, None, None)
 
 
 def save_chat_memory(user_id, target_id, role, content, scene='', identity=''):
@@ -1104,7 +1169,7 @@ def _call_ner_extraction(text_blocks):
         )
 
         response = client.chat.completions.create(
-            model='glm-4-flash',  # NER任务用轻量模型即可
+            model=_model,  # NER任务用轻量模型即可
             messages=[
                 {'role': 'system', 'content': '你是精准的中文NER提取引擎，只输出结构化JSON，不要任何解释。'},
                 {'role': 'user', 'content': ner_prompt}
@@ -1266,112 +1331,43 @@ def get_memory_list_api(user_id, target_id=None):
 
 
 def call_ai_api(scene, identity, style, custom_desc, message, target_info='', memory_context=None):
-
-
-    """
-
-
-    调用AI大模型生成回复建议 (v2.1增强版)
-
-
+    """Call AI model to generate reply suggestions (v5.0 - dual-model + post-filter)"""
+    def dbg(msg):
+        try:
+            with open(r'C:\Users\admin\Desktop\沉鱼AI畅聊助手_正式版\server\pf_debug.log', 'a', encoding='utf-8') as f:
+                f.write(f'[call_ai] {msg}\n')
+        except: pass
     
-
-
-    融合v3.0核心优势：
-
-
-    - 22+条精准回复建议（原版仅8-10条Mock）
-
-
-    - 深度场景化Prompt（社交6种 × 营销6种）
-
-
-    - 风格标签分类（[幽默][走心][调侃]...）
-
-
-    - 变体生成算法确保数量充足
-
-
-    - 多层降级机制保证可用性
-
-
-    
-
-
-    Returns:
-
-
-        list: 建议回复列表 (22+条)
-
-
-    """
-
-
+    dbg('START')
     suggest_prompt = _build_v4_prompt(scene, identity, custom_desc, message, target_info)
-
-
-    
-
+    dbg(f'prompt built, len={len(suggest_prompt)}')
 
     try:
-
-
-        # 使用OpenAI兼容客户端调用智谱AI
-
-
-        client = openai.OpenAI(
-
-
-            api_key=ZHIPU_API_KEY,
-
-
-            base_url=ZHIPU_API_URL
-
-
-        )
-
-
-        
-
-
-        response = client.chat.completions.create(
-
-
-            model='glm-4-flash',
-
-
-            messages=[
-
-
-                {'role': 'system', 'content': '你是沉鱼AI畅聊助手v4.0引擎-顶级回复建议专家。\n核心原则:\n1.每条回复必须像真人发的微信消息，绝对不能有任何AI味\n2.严格遵循用户指定的场景和身份要求\n3.输出格式：每条一行 [标签]回复内容，标签从指定列表中选择\n4.禁止：说教/油腻/土味/问在干嘛/泛泛而谈/重复句式\n5.必须针对对方消息的具体内容回复，不能无视消息内容\n6.[记忆功能]如果提供了之前的对话上下文或关键信息摘要，请自然地引用让对话更连贯\n7.[v4.0]注意消息类型和应对策略，确保回复策略多样化\n直接输出，不要任何解释说明。'},
-
-
-                # [v3.3] 注入聊天记忆上下文（在system和user之间）
-                *(memory_context or []),
-
-                {'role': 'user', 'content': suggest_prompt}
-
-
-            ],
-
-
-            max_tokens=3500,
-
-
-            temperature=0.83,
-
-
-            top_p=0.92,
-
-
-        )
-
-
-        
-
-
-        raw = response.choices[0].message.content.strip()
-
+        # v5.0 Dual-model: Try Plus first, fallback to Flash
+        for _model in ([AI_PRIMARY_MODEL, AI_FALLBACK_MODEL] 
+                       if AI_PRIMARY_MODEL != AI_FALLBACK_MODEL 
+                       else [AI_PRIMARY_MODEL]):
+            try:
+                dbg(f'Trying model: {_model}')
+                client = openai.OpenAI(api_key=ZHIPU_API_KEY, base_url=ZHIPU_API_URL)
+                response = client.chat.completions.create(
+                    model=_model,
+                    messages=[
+                        {'role': 'system', 'content': '你是沉鱼AI畅聊助手v5.0引擎。核心原则:\n1.每条回复必须像真人发的微信消息，绝对不能有任何AI味\n2.严格遵循用户指定的场景和身份要求\n3.输出格式：每条一行 [标签]回复内容\n4.禁止：说教/油腻/土味/问在干嘛/泛泛而谈/重复句式/好家伙/确实如此/整一个/牛逼\n5.[v5.0]回复必须符合当前身份的说话方式：情侣不能用兄弟语气，女朋友不能用哥们用语\n直接输出，不要任何解释说明。'},
+                        *(memory_context or []),
+                        {'role': 'user', 'content': suggest_prompt}
+                    ],
+                    max_tokens=4000, temperature=0.85, top_p=0.93,
+                )
+                raw = response.choices[0].message.content.strip()
+                dbg(f'Model {_model} OK! raw len={len(raw)}')
+                break
+            except Exception as inner_e:
+                dbg(f'Model {_model} FAILED: {inner_e}')
+                print(f'[AI] Model {_model} failed: {inner_e}')
+                if _model == AI_FALLBACK_MODEL:
+                    raise inner_e
+                continue
 
         pt = _parse_v3_replies_tagged(raw)
         if pt:
@@ -1381,56 +1377,36 @@ def call_ai_api(scene, identity, style, custom_desc, message, target_info='', me
             replies = _parse_v3_replies(raw)
             g.tagged_replies = None
 
-
-        
-
-
-        # 变体扩充：如果不足22条，用变体算法补足
-
-
+        # Fill up to MIN_REPLIES with variants
         if len(replies) < MIN_REPLIES and len(replies) > 0:
-
-
             extras = []
-
-
             for base in replies[:min(3, len(replies))]:
-
-
                 extras.extend(_generate_variants(base, max(5, MIN_REPLIES - len(replies))))
-
-
             for ext in extras:
-
-
                 if ext not in replies and len(replies) < MIN_REPLIES:
-
-
                     replies.append(ext)
 
-
-        
-
-
-# v3.4: 智能排序（只调用一次）+ 去重
-        replies = _deduplicate_replies(replies)  # 先去重
+        # v5.0 Pipeline: dedup -> rank -> post-filter -> return
+        dbg(f'Raw replies: {len(replies)}')
+        replies = _deduplicate_replies(replies)
+        dbg(f'After dedup: {len(replies)}')
         replies = _rank_replies(replies, message, identity)
-        return replies[:25]  # 最多25条
-
-
-        
-
+        dbg(f'After rank: {len(replies)} - calling post_filter...')
+        replies = _post_filter_replies(replies, message, identity, scene)
+        dbg(f'After post_filter: {len(replies)}')
+        # v5.0新增: 风格一致性检查（最后防线——检测兄弟语气词并替换）
+        replies = _filter_by_style(replies, identity)
+        dbg(f'After filter_by_style: {len(replies)}')
+        return replies[:25]
 
     except Exception as e:
-
-
+        dbg(f'EXCEPTION: {e}')
+        import traceback
+        dbg(traceback.format_exc())
         print(f'[AI Primary Error] {e}')
-
-
-        # 降级：尝试备用方案
-
-
+        traceback.print_exc()
         return _fallback_ai_generate(scene, identity, custom_desc, message)
+
 
 
 
@@ -1493,9 +1469,24 @@ def _build_v4_prompt(scene, identity, custom_desc, message, target_info=''):
                                           '帮我', '请教', '哪个', '选哪个', 'offer']):
             return ('seeking_help', '对方在求助或纠结 → 【必须给出具体可行的建议或方案】不能只说安慰话！分析选项、给理由、甚至帮TA做决定。如果真不懂就诚实说然后转移话题。')
         
-        # 冷淡/敷衍信号
-        if len(msg_lower) <= 2 and not any(w in msg_lower for w in ['！', '！', '?', '？']):
-            return ('cold_brief', '对方回得很冷淡/简短(如"嗯""哦""哈哈") → 【回复也要简短！1-8个字】用轻松/好奇/调皮的一句话重新激活对话，不要长篇大论。可以故意曲解、卖萌、或者丢出一个有趣的新话题钩子。')
+        # 冷淡/敷衍信号（v5.0大幅增强）
+        cold_patterns = [
+            # 极短回复
+            len(msg_lower) <= 2 and not any(w in msg_lower for w in ['！', '！', '?', '？']),
+            # 常见冷淡单/双字
+            msg_lower in ['嗯', '哦', '呵', '好', '行', '嗯嗯', '哦哦', '好吧', '行呗',
+                          '没', '呢', '啊', '噢', '哼', '额', '恩', '喔'],
+            # 典型敷衍短语
+            msg_lower in ['哈哈', '哈哈哈哈', '笑死', '是的', '对的', '好的吧', 
+                          '可以啊', '没问题', '知道了', '明白了', '懂了', '好吧好吧',
+                          '哦哦哦', '嗯嗯嗯', '好好好', '行行行', '是吗', '真的吗',
+                          '没呢', '还没', '差不多', '就这样吧', '随你', '无所谓',
+                          '还行吧', '也就那样', '凑合', '一般般', '马马虎虎'],
+            # 表情包式无内容
+            any(msg_lower == e*2 or msg_lower == e*3 for e in ['哈', '呵', '嘿', '嘻']),
+        ]
+        if any(cold_patterns):
+            return ('cold_brief', '对方回得很冷淡/简短(如"嗯""哦""哈哈""好吧") → 【回复也要简短！1-10个字】用轻松/好奇/调皮/故意曲解的一句话重新激活对话，绝对不要长篇大论！可以用卖萌、丢出新话题钩子、故意曲解对方意思等方式。示例长度："咋啦""想我了？""大事不好了""猜我看到了什么""？？就这？"')
         
         # 默认：普通陈述
         return ('general_statement', '对方的普通陈述 → 共情+分享相关经历+提出新角度/新话题')
@@ -1654,97 +1645,79 @@ def _build_v4_prompt(scene, identity, custom_desc, message, target_info=''):
             "\n【输出格式】每条一行不加序号不加引号 格式:[标签]回复内容"
         )
     else:
-        # ===== v4.0社交Prompt（大幅增强）=====
+        # ===== v5.0精简社交Prompt（核心指令优先 + 高遵循度设计）=====
+        # 核心理念：减少指令数量 → 提高每条指令的遵循率
         prompt = (
-            "你是沉鱼AI畅聊助手的顶级社交聊天引擎v4.0。\n"
-            + anti_ai_rules + "\n"
-            
-            f"【📊 消息智能分析】\n"
-            f"消息类型: {msg_type}\n"
-            f"应对策略: {msg_type_hint}\n\n"
-            
-            + target_context +
-            "\n对方发了这条微信，你需要给出%d条不同风格的精准回复。\n\n" % MIN_REPLIES +
-            "【关系】%s - %s\n" % (id_name, id_info[1]) +
-            "【关系详解】%s\n\n" % id_detail +
-            "【对方消息】%s\n\n" % message +
-            
-            "【回复策略分配要求——必须覆盖以下全部策略角度】\n"
-            "━━━ 情绪回应类（接住对方的情绪） ━━━\n"
-            "1. [共鸣] ×3条 —— 接住对方情绪，站在同一阵营\n"
-            "2. [走心] ×2条 —— 温暖真诚，触动人心\n"
-            "3. [调侃] ×2条 —— 轻松调侃，活跃气氛\n"
-            "━━━ 内容推进类（推动对话发展） ━━━\n"
-            "4. [延伸] ×3条 —— 基于消息内容延伸出新话题\n"
-            "5. [好奇] ×2条 —— 对某件事表示好奇，引导对方多说\n"
-            "6. [分享] ×2条 —— 分享自己类似的经历/感受\n"
-            "7. [反问] ×2条 —— 巧妙反问，引发思考或延续话题\n"
-            "━━━ 创意突破类（让人眼前一亮） ━━━\n"
-            "8. [幽默] ×3条 —— 让对方笑出来的神回复\n"
-            "9. [意外] ×2条 —— 出乎意料的角度，打破常规\n"
-            "10. [行动] ×1条 —— 提出具体的行动建议/邀约\n"
-            
-            "\n【严格质量标准】\n"
-            "1. 每1-2句微信打字风格口语化自然\n"
-            "2. 禁止表白油腻土味情话廉价赞美\n"
-            "3. 禁止讲道理说教问在干嘛\n"
-            "4. 每条开头必须不同!禁止连续相同句式!\n"
-            "5. 风格标记:[幽默][走心][调侃][关心][延伸][共鸣][自嘲][反问][好奇]\n"
-            "6. emoji最多1个/条\n"
-            "7. 至少5条主动延伸新话题\n"
-            "8. 像真人发的微信不像AI生成的!\n"
-            
-            # ===== v4.1: 动态质量约束 =====
-            f"\n【v4.1 动态约束 - 基于「{msg_type}」消息类型】\n"
+            f"你是沉鱼AI畅聊助手v5.0引擎。生成{MIN_REPLIES}条像真人微信聊天的回复。\n\n"
+            # === 核心规则（仅保留最关键的3条）===
+            "【⛔ 三大铁律（违反任何一条=不合格）】\n"
+            "1. 绝对禁止AI味：不说教/不油腻/不土味/不泛泛而谈/不重复句式\n"
+            "   禁用词列表：作为一个AI|语言模型|在干嘛呢|今天过得怎么样|吃了吗|多喝热水|你应该|你需要|加油你是最棒的\n"
+            f"2. 身份严格匹配：「{id_name}」{id_info[1]}\n"
+            f"   {id_detail}\n"
+            f"3. 消息类型精准应对：{msg_type} → {msg_type_hint}\n\n"
+            + (target_context + "\n" if target_context else "")
+            + f"【对方消息】{message}\n\n"
+            # === 策略分配（简化为5个核心维度）===
+            "【22条回复必须覆盖这5个维度】\n"
+            "📌 共鸣走心(5条) — 接住情绪/温暖真诚/触动人心\n"
+            "📌 幽默调侃(5条) — 让人笑出来/轻松活跃气氛\n"
+            "📌 延伸好奇(5条) — 延伸话题/好奇引导/分享经历\n"
+            "📌 反问互动(4条) — 反问引导/延续话题/引发思考\n"
+            "📌 意外创意(3条) — 出乎意料/打破常规/神回复\n\n"
+            # === 质量约束（精简为4条最关键）===
+            "【质量红线】\n"
+            "• 每1-2句微信口语风格，像真人打字不是写文章\n"
+            "• 每条开头必须不同！禁止连续相同句式！\n"
+            "• emoji最多1个/条，风格标记:[幽默][走心][调侃][延伸][共鸣][反问][好奇][意外]\n"
+            "• 至少8条主动延伸新话题，不要全都是被动回应\n"
         )
-        
-        # v4.1: 根据消息类型追加特定约束
-        dynamic_constraints = {
+
+        # === v5.0 动态约束（更强力更具体）===
+        type_hard_rules = {
             'cold_brief': (
-                "⚠️ 对方回得很冷淡/简短！\n"
-                "★ 至少8条回复必须是1-8个字的短句！\n"
-                "★ 示例长度: '咋啦' '想我了？' '大事不好了' '猜我看到了什么'\n"
-                "★ 长篇大论会被直接忽略！匹配对方的节奏！\n"
+                "\n【🚨 冷淡回复强制约束】"
+                "\n★ 对方很冷淡！至少12条必须是1-10字的超短回复！"
+                "\n★ 合格示例:'咋啦' '想我了？' '大事不好了' '？？就这？' '行吧你赢了' '这是在跟我闹脾气？'"
+                "\n★ 不合格示例（太长会被忽略）:'其实我觉得你可以跟我说说你怎么了毕竟我们是好朋友'"
+                "\n★ 匹配对方节奏！短对短！"
             ),
             'seeking_help': (
-                "⚠️ 对方在求助！不能只说安慰的话！\n"
-                "★ 至少5条必须包含具体的建议、方案或分析！\n"
-                "★ 如果是选择题，要明确给出选哪个+为什么！\n"
-                "★ 禁止只说'加油''你可以的''相信自己'这种空话！\n"
-                "★ 示例: '我觉得A更好因为...''要不你试试...''我建议你这样...'\n"
+                "\n【🚨 求助场景强制约束】"
+                "\n★ 对方需要实际帮助！至少8条必须包含具体建议/方案/分析！"
+                "\n★ 选择题必须明确说选哪个+为什么！"
+                "\n★ 禁止空话:'加油''你可以的''相信自己''一切都会好起来的'"
+                "\n★ 合格示例:'选A因为...''要不你试试...''我建议这样...先...再...最后...'"
             ),
             'venting': (
-                "⚠️ 对方在吐槽发泄情绪！\n"
-                "★ 前3条必须先共情接住情绪！不要急着给建议！\n"
-                "★ 一起骂/一起吐槽比讲道理有效100倍\n"
-                "★ 可以用'天啊''我也是''太离谱了'等共情开头\n"
+                "\n【🚨 吐槽场景强制约束】"
+                "\n★ 前5条必须先共情！不要急着给建议！"
+                "\n★ 一起骂比讲道理有效100倍！用'天啊''我也是''太离谱了'开头"
             ),
             'excited': (
-                "⚠️ 对方很开心兴奋！\n"
-                "★ 匹配对方的高能量！不要泼冷水！\n"
-                "★ 用'卧槽''天哪''真的假的''我也想看'等高反应词语\n"
-                "★ 可以放大对方的情绪让它更有趣\n"
+                "\n【🚨 开心场景强制约束】"
+                "\n★ 匹配高能量！用'卧槽''天哪''真的假的''这也太帅了吧'等高反应词"
+                "\n★ 绝对不要泼冷水！放大对方情绪让它更有趣"
             ),
             'caring_miss': (
-                "⚠️ 对方表达关心或想念！\n"
-                "★ 温暖回应+反向关心是最佳组合\n"
-                "★ 不要只用'我也想你'就完了，加一点自己的近况分享\n"
+                "\n【🚨 关心/想念场景强制约束】"
+                "\n★ 温暖回应+反向关心+近况分享，三件套！"
+                "\n★ 不要只用'我也想你'就完了，那太干巴了"
             ),
         }
         
-        prompt += dynamic_constraints.get(msg_type, 
-            "★ 按照消息类型的策略提示精准回复即可。\n")
-        
+        prompt += type_hard_rules.get(msg_type, 
+            f"\n★ 按「{msg_type}」类型的策略提示精准回复。\n")
+
+        # === 示例注入（从5条减到3条精华）===
+        examples = _get_dynamic_examples(identity, msg_type, message)
         prompt += (
-            "\n【优质示例参考——请模仿此质量和风格】\n"
-            f"示例-基于当前消息类型({msg_type})-对方说「{message[:20]}{'...' if len(message)>20 else ''}」:\n"
-            "[幽默]%s\n"
-            "[走心]%s\n"
-            "[延伸]%s\n"
-            "[共鸣]%s\n"
-            "[好奇]%s\n\n"
+            "\n【模仿示例（请达到此质量和风格）】\n"
+            f"[幽默]{examples[0]}\n"
+            f"[走心]{examples[1] if len(examples) > 1 else examples[0]}\n"
+            f"[延伸]{examples[2] if len(examples) > 2 else examples[0] if len(examples) > 1 else examples[0]}\n\n"
             "【输出格式】每条一行不加序号不加引号 格式:[标签]回复内容"
-        ) % _get_dynamic_examples(identity, msg_type, message)
+        )
     
     return prompt
 
@@ -1918,6 +1891,161 @@ def _get_dynamic_examples(identity, msg_type, message):
             "哎你说得对 我也有同感",
             "真的假的？不会吧",
             "可以啊这个！学到了学到了",
+        ),
+        
+        # ===== v5.0新增：更多身份×消息类型组合 =====
+        
+        # 情侣 + 更多消息类型
+        ('couple', 'general_question'): (
+            "emmm 让我想想哦～",
+            "这个嘛 我觉得其实都行 看你心情",
+            "要不咱俩一起想想？",
+            "说实话我也不太确定 要不查查？",
+            "选哪个都行啦 别纠结太久～",
+        ),
+        ('couple', 'default'): (
+            "宝贝 怎么啦～想我了？",
+            "在呢在呢 怎么啦宝贝",
+            "嗯？怎么了呀",
+            "怎么突然找我呀 有什么事吗",
+            "想你了刚在干嘛呢",
+        ),
+        
+        # 正在追 + 更多消息类型
+        ('chase', 'cold_brief'): (
+            "就这？两个字就把我打发了",
+            "好吧 你赢了 这么高冷",
+            "行 那我也不吵你了",
+            "怎么啦 心情不好？",
+            "嗯？你这是在考验我吗",
+        ),
+        ('chase', 'general_question'): (
+            "emmm这个问题 让我想想",
+            "其实吧 我觉得关键在于...",
+            "要不这样 我们一起看看？",
+            "这个我之前好像遇到过",
+            "要我说的话 直接选XX",
+        ),
+        ('chase', 'default'): (
+            "怎么了？有什么事吗",
+            "在呢在呢 说吧",
+            "嗯？怎么突然找我",
+            "怎么啦 有什么事吗",
+            "刚在想你呢 你就来了 心灵感应？",
+        ),
+        
+        # 好朋友 + 更多消息类型
+        ('friend', 'seeking_help'): (
+            "这个问题问对人了！听我说",
+            "让我想想啊 我好像有经验",
+            "直接选A吧 我帮你分析一下",
+            "要不这样 你把具体情况说说",
+            "这个问题我来帮你解决！",
+        ),
+        ('friend', 'default'): (
+            "怎么啦什么事",
+            "在呢在呢 说吧",
+            "哈哈哈哈你猜我刚看到什么",
+            "话说最近怎么样啊",
+            "哎对了我跟你说个事",
+        ),
+        
+        # 温柔治愈 + 更多消息类型
+        ('gentle', 'seeking_help'): (
+            "别急 慢慢来 我帮你想想",
+            "这个问题我来帮你分析一下",
+            "其实我觉得关键在于...",
+            "要不我们一起理一下思路？",
+            "如果是我面对这种情况，我会这么做：...",
+        ),
+        ('gentle', 'default'): (
+            "怎么啦？有什么事吗",
+            "在呢 怎么了",
+            "嗯？想说啥就说呗",
+            "别急 慢慢说",
+            "怎么了？需要帮忙吗",
+        ),
+        
+        # ===== v5.0新增：营销场景示例库 =====
+        
+        # 获客场景 lead
+        ('lead', 'default'): (
+            "您好！很高兴认识您～我们这里有很多实用的解决方案",
+            "感谢您的关注！方便了解一下您的需求吗",
+            "您好呀～有什么我可以帮到您的",
+            "您好！我们的服务可以帮助您解决很多问题",
+            "您好～请问有什么可以帮到您的呢",
+        ),
+        ('lead', 'cold_brief'): (
+            "好的 您先了解一下",
+            "好的 有需要随时找我",
+            "好的呢～",
+            "嗯嗯 好的",
+            "好的 您慢慢看",
+        ),
+        
+        # 客户跟进 follow_up
+        ('lead', 'seeking_help'): (
+            "您好！上次聊到的方案您考虑得怎么样了",
+            "您好呀～有什么问题随时可以问我",
+            "您好～请问还有什么需要了解的吗",
+            "您好！我们的服务可以帮助您解决很多问题",
+            "您好～方便的话可以详细聊聊您的需求",
+        ),
+        
+        # 投诉处理 complaint
+        ('complaint', 'default'): (
+            "非常抱歉给您带来不便！我马上帮您处理",
+            "完全理解您的心情 我这就帮您解决",
+            "抱歉抱歉！是我的问题 我来负责",
+            "真的很抱歉！我马上帮您核实",
+            "对不起！我这就帮您处理",
+        ),
+        ('complaint', 'venting'): (
+            "真的非常抱歉！您说的我完全理解",
+            "抱歉抱歉 您说得对 是我们的失误",
+            "完全理解您的感受！我这就帮您解决",
+            "天呐 真的很抱歉！我马上处理",
+            "抱歉！给您添麻烦了 我来负责到底",
+        ),
+        ('complaint', 'seeking_help'): (
+            "请问具体是什么问题呢 我一定负责到底",
+            "好的 我来帮您查一下具体情况",
+            "明白了 我马上帮您核实处理",
+            "好的 您详细说说 我来帮您解决",
+            "我知道了 您别着急 我这就帮您处理",
+        ),
+        
+        # 搞笑沙雕 funny + 更多消息类型
+        ('funny', 'venting'): (
+            "哈哈哈哈哈哈这也太离谱了吧",
+            "救命 我笑到邻居来敲门了",
+            "笑死我了 这什么奇葩剧情",
+            "哈哈哈哈哈哈救命救命",
+            "我的天 这也太秀了吧",
+        ),
+        ('funny', 'cold_brief'): (
+            "？？就这？",
+            "行 那我自己嗨了",
+            "好的收到（假装很认真）",
+            "嗯 很好 非常棒",
+            "行吧 你赢了",
+        ),
+        ('funny', 'default'): (
+            "哈哈哈哈哈哈",
+            "救命 笑死我了",
+            "我的天 太离谱了",
+            "哈哈哈哈笑到头掉",
+            "救命 我不行了",
+        ),
+        
+        # ===== v5.0新增：家人/长辈场景 =====
+        ('gentle', 'caring_miss'): (
+            "妈/爸 我在呢 怎么了",
+            "在呢在呢 什么事啊",
+            "好的妈 我知道了",
+            "放心吧 我挺好的",
+            "嗯嗯 知道啦妈",
         ),
     }
     
@@ -2498,6 +2626,307 @@ def _rank_replies(replies, message, identity='friend'):
     
     return [item[2] for item in scored]
 
+
+
+
+def _filter_by_style(replies, identity='friend'):
+    """v5.0 风格一致性检查——检测兄弟语气词并智能替换（最终防线）
+    
+    问题：GLM-4-Flash/Plus偶发会生成"好家伙""牛逼"等兄弟语气词
+    解决方案：
+    1. 检测敏感身份的兄弟语气词
+    2. 智能替换为对应身份的语气词
+    3. 严重违规则完全替换，轻微违规则替换关键词
+    
+    适用身份：couple/女朋友/gentle（不能有兄弟语气）
+    """
+    if not replies:
+        return replies
+    
+    # 检测身份是否需要严格语气过滤
+    strict_identities = ['couple', '女朋友', 'gentle', '温柔治愈']
+    if identity not in strict_identities:
+        return replies  # 好朋友/正在追等身份允许这些词
+    
+    # 兄弟语气词 → 甜蜜语气词 映射表
+    brother_to_sweet = {
+        '好家伙': '哎呀',
+        '好家伙这': '哎呀这',
+        '整一个': '整一个~',
+        '整一个这': '这',
+        '牛逼': '好厉害',
+        '牛批': '好棒',
+        '卧槽': '天呐',
+        '卧槽这': '天呐这',
+        '铁子': '宝贝',
+        '兄弟': '亲爱的',
+        '老哥': '宝贝',
+        '哥们': '亲爱的',
+        '哥们儿': '宝贝~',
+        '大佬': '小天才',
+        '这波': '这次',
+        '兄弟们': '宝贝们',
+        '铁哥们': '亲爱的们',
+        '老铁': '宝贝',
+        '牛逼啊': '好厉害呀',
+        '卧槽牛逼': '天呐好厉害',
+    }
+    
+    # 需要完全替换的严重违规词（替换整条）
+    severe_violations = {
+        '我喜欢你', '我爱你', '做我女朋友', '嫁给我', '求你了',
+        '离不开你', '没有你不行', '你是我的', '我想你了太久',
+        '不能没有你', '每天想你', '真的好喜欢你',
+    }
+    
+    # 额外检测：兄弟专属语气词（更宽泛的匹配）
+    brother_words_pattern = ['好家伙', '整一个', '牛逼', '牛批', '卧槽', '铁子', 
+                            '兄弟', '老哥', '哥们', '大佬', '这波', '铁哥们']
+    
+    result = []
+    replacement_count = 0
+    
+    for r in replies:
+        text = r.get('text', r) if isinstance(r, dict) else r
+        modified = text
+        
+        # 检查严重违规
+        for violation in severe_violations:
+            if violation in modified:
+                # 完全替换这条，用通用回复替代
+                modified = _generate_style_replacement(identity, text)
+                replacement_count += 1
+                break
+        
+        if modified == text:  # 没有被严重违规替换，才做语气词替换
+            # 逐一替换兄弟语气词
+            for brother, sweet in brother_to_sweet.items():
+                if brother in modified:
+                    modified = modified.replace(brother, sweet)
+                    replacement_count += 1
+            
+            # 额外检查：包含多个兄弟语气词=风格整体偏离→替换整条
+            brother_count = sum(1 for bw in brother_words_pattern if bw in modified)
+            if brother_count >= 2:
+                modified = _generate_style_replacement(identity, text)
+                replacement_count += 1
+        
+        if isinstance(r, dict):
+            r['text'] = modified
+            result.append(r)
+        else:
+            result.append(modified)
+    
+    # Debug log
+    if replacement_count > 0:
+        try:
+            with open(r'C:\Users\admin\Desktop\沉鱼AI畅聊助手_正式版\server\style_filter.log', 'a', encoding='utf-8') as f:
+                f.write(f'[_filter_by_style] identity={identity} replacements={replacement_count}\n')
+        except:
+            pass
+    
+    return result
+
+
+def _generate_style_replacement(identity, original_text):
+    """根据身份生成风格一致的替换回复"""
+    import random as _r
+    
+    # 情侣/女朋友风格的替换选项
+    couple_replacements = [
+        "宝贝 怎么啦～",
+        "想你了呢",
+        "抱抱 心疼你",
+        "乖乖 怎么啦",
+        "怎么这个表情呀",
+        "怎么啦宝贝",
+        "嗯？怎么了呀",
+        "怎么突然这么说",
+    ]
+    
+    # 温柔治愈风格的替换选项
+    gentle_replacements = [
+        "辛苦了，抱抱你",
+        "辛苦了，慢慢来",
+        "没事的，我理解",
+        "抱抱你，别太累",
+        "辛苦了，注意休息",
+    ]
+    
+    if identity in ['couple', '女朋友']:
+        return _r.choice(couple_replacements)
+    elif identity == 'gentle':
+        return _r.choice(gentle_replacements)
+    else:
+        return original_text  # 保持原样
+
+
+def _post_filter_replies(replies, message, identity='friend', scene='social'):
+    """v5.0 Post-processing filter"""
+    # Debug: write to file
+    def dbg(msg):
+        try:
+            with open(r'C:\Users\admin\Desktop\沉鱼AI畅聊助手_正式版\server\pf_debug.log', 'a', encoding='utf-8') as f:
+                f.write(f'[PostFilter] {msg}\n')
+        except:
+            pass
+    dbg(f'CALLED! identity={identity} replies={len(replies) if replies else 0}')
+    
+    import re as _re
+    
+    if not replies or len(replies) <= 5:
+        return replies
+    
+    # ---- Identity consistency feature bank (v5.0增强版) ----
+    identity_rules = {
+        'couple': {
+            'ban_words': ['好家伙','整一个','牛逼','牛批','卧槽','铁子','兄弟','老哥',
+                         '哥们','大佬','这波','兄弟们','哥们儿','铁哥们','老铁',
+                         '牛逼啊','卧槽牛逼','好家伙这','整一个这'],
+            'bonus_words': ['宝贝','亲爱的','哼','呀~','嘛','啦','呢','亲','乖',
+                          '想你','爱你','抱抱','心疼','宝宝','老公','老婆',
+                          '人家想你了','想死你了','么么哒','mua'],
+            'penalty': -30,
+            'hard_filter': True,
+        },
+        '女朋友': {
+            'ban_words': ['好家伙','整一个','牛逼','牛批','卧槽','铁子','兄弟','老哥',
+                         '哥们','大佬','这波','兄弟们','哥们儿','铁哥们','老铁',
+                         '牛逼啊','好家伙这'],
+            'bonus_words': ['宝贝','亲爱的','哼','呀~','嘛','啦','呢','亲','乖',
+                          '想你','爱你','抱抱','心疼','宝宝','人家想你了',
+                          '想死你了','哼不理你了','讨厌啦'],
+            'penalty': -30,
+            'hard_filter': True,
+        },
+        'friend': {
+            'ban_words': ['宝贝','亲爱的','我爱你','做我女朋友吧','嫁给我','娶我',
+                         '人家想你','想死你了','么么哒','老公','老婆','乖',
+                         '宝贝我想你了','亲爱的我爱你'],
+            'extra_ban': ['太油腻了', '土味情话', '你是我的全世界'],  # v5.0新增
+            'penalty': -20,
+            'hard_filter': False,
+        },
+        'chase': {
+            'ban_words': ['我喜欢你','我爱你','能不能做我','求你了','我真的好喜欢你',
+                         '离不开你','没有你不行','你是我的','我想你了太久',
+                         '不能没有你','每天想你','做我女朋友好不好','嫁给我吧',
+                         '我不能没有你','没有你的日子','真的好喜欢你'],
+            'bonus_words': ['感觉','觉得','可能','也许','挺','蛮','还','倒是',
+                          '突然','刚好','有意思','不错嘛','可以啊'],
+            'penalty': -25,
+            'hard_filter': True,
+        },
+        'gentle': {
+            'ban_words': ['卧槽','牛逼','牛批','傻逼','滚','去死','妈的','尼玛',
+                         '傻b','草','tm','tmd','妈蛋','操','蠢逼'],
+            'bonus_words': ['辛苦了','心疼','抱抱','没事的','慢慢来','别担心',
+                          '我在','懂你的','不容易','好好照顾自己','抱抱你'],
+            'penalty': -18,
+            'hard_filter': False,
+        },
+        'funny': {
+            'ban_words': ['确实如此','说得对','有道理','确实是这样','你说得对',
+                         '很好笑','真有趣','太有意思了','我觉得你说得对',
+                         '是的没错'],  # 太正经=不好笑
+            'bonus_words': ['哈哈哈哈','笑死','卧槽','绝了','牛','卷','离谱',
+                           '救命','笑不活了','真的假的','不会吧','哈哈哈',
+                           '笑到头掉','笑得肚子疼','我人没了','破防了'],
+            'penalty': -15,
+            'hard_filter': False,
+        },
+        # v5.0新增: 营销场景强化
+        'lead': {
+            'ban_words': ['赶紧买','马上下单','最后机会','不买就没了','再不买就',
+                         '错过就没','限时抢购','便宜卖','亏本甩卖'],
+            'bonus_words': ['专业','经验','帮您','了解','方案','效果','很多客户',
+                           '其实','关键是','根据您的需求'],
+            'penalty': -22,
+            'hard_filter': True,
+        },
+        'complaint': {
+            'ban_words': ['但是','不过','其实是','您也有责任','这不是我们的问题',
+                         '您搞错了','没办法','规定就是这样','公司政策'],
+            'bonus_words': ['非常抱歉','完全理解','我的错','一定负责','补偿',
+                           '马上处理','追踪到底','给您一个满意的解决方案'],
+            'penalty': -28,
+            'hard_filter': True,
+        },
+    }
+    
+    # ---- Anti-AI template patterns ----
+    ai_patterns = [
+        (r'^.{0,3}(确实如此|确实是这样|说得对|有道理)', -12),
+        (r'(在干嘛呢？|今天过得怎么样？|吃了吗？|多喝热水)', -15),
+        (r'^(你应该|你需要|你要学会|其实.*最重要)', -10),
+        (r'^(作为一个|作为一个人|人生就是|生活就是)', -12),
+        (r'^(哈哈|好的|可以|嗯嗯|哦哦)$', -8),
+    ]
+    
+    # ---- Message type constraints ----
+    def get_constraints(msg):
+        ml = msg.lower().strip()
+        if len(ml) <= 2:
+            return {'max_len': 12}
+        if any(w in ml for w in ['烦','累','气','无语','崩溃']):
+            return {'empathy_first': True}
+        if any(w in ml for w in ['怎么办','不知道','纠结','建议']):
+            return {'need_advice': True}
+        return {}
+    
+    constraints = get_constraints(message)
+    id_rule = identity_rules.get(identity, {})
+    
+    # ---- Score each reply (with hard-filter) ----
+    scored = []
+    hard_filtered = 0
+    do_hard_filter = id_rule.get('hard_filter', False)
+    
+    for i, r in enumerate(replies):
+        text = r.get('text', r) if isinstance(r, dict) else r
+        delta = 0
+        is_banned = False
+        
+        # Identity check
+        ban_list = id_rule.get('ban_words', [])
+        for bw in ban_list:
+            if bw in text:
+                delta += id_rule.get('penalty', -10)
+                is_banned = True
+                break
+        
+        # Hard filter: completely remove banned replies for sensitive identities
+        if do_hard_filter and is_banned:
+            hard_filtered += 1
+            continue  # Skip this reply entirely
+        
+        bonus_list = id_rule.get('bonus_words', [])
+        for bw in bonus_list[:2]:
+            if bw in text:
+                delta += 3
+                break
+        
+        # AI template check
+        for pat, pen in ai_patterns:
+            if _re.search(pat, text):
+                delta += pen
+                break
+        
+        # Length constraint
+        if constraints.get('max_len') and len(text) > constraints['max_len']:
+            delta -= 8
+        
+        scored.append({'idx': i, 'text': text, 'delta': delta, 'orig': r})
+    
+    scored.sort(key=lambda x: x['delta'], reverse=True)
+    
+    if hard_filtered > 0 or any(s['delta'] < -10 for s in scored):
+        low_count = sum(1 for s in scored if s['delta'] < -10)
+        print(f'[PostFilter] identity={identity} | hard_removed={hard_filtered} penalized={low_count}')
+        for f in scored[-3:] if len(scored) > 3 else []:
+            print(f'   [{f["delta"]:>4}] {f["text"][:40]}')
+    
+    return [s['orig'] for s in scored]
 
 def _fallback_ai_generate(scene, identity, custom_desc, message):
 
@@ -4001,6 +4430,16 @@ def generate_suggestions():
     if key_info and memory_context is not None:
         memory_context.append({'role': 'system', 'content': key_info})
         print('[Memory] 已注入关键信息摘要到上下文')
+
+    # v5.0创新功能：智能话题延续检测
+    topic_hint = ''
+    if target_id:
+        is_continuation, topic, hint = detect_topic_continuation(g.user_id, target_id, message)
+        if is_continuation and hint:
+            topic_hint = f'\n[话题延续检测] {hint}'
+            print(f'[TopicDetect] {topic_hint}')
+            if memory_context is not None:
+                memory_context.append({'role': 'system', 'content': topic_hint})
 
     # 调用AI（v3.3: 传入记忆上下文）
     suggestions = call_ai_api(scene, identity, style, custom_desc, message, target_info, memory_context)

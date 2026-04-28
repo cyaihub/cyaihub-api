@@ -28,6 +28,19 @@ set_*.py
 verify_*.py
 fix_*.py
 check_*.py
+t*.py
+v5_*.py
+debug_*.py
+upgrade*.py
+patch_*.py
+selfcheck*.py
+security_hardening*.py
+setup_*.py
+make_*.py
+mouse_*.py
+
+# 部署文档
+ZEABUR_*.md
 
 # 日志
 *.log
